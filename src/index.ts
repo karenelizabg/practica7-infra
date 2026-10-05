@@ -13,6 +13,12 @@ export interface Env {
 	p6: D1Database;
 }
 
+// Lee todos los registros de la tabla users en la BD D1
+export async function queryDatabase(db: D1Database) {
+	const { results } = await db.prepare("SELECT * FROM users").all();
+	return results;
+}
+
 export default {
 	async fetch(request, env, ctx): Promise<Response> {
 		const url = new URL(request.url);
@@ -41,13 +47,7 @@ export default {
 			}
 		}
 
-		const data = await this.queryDatabase(env.p6);
+		const data = await queryDatabase(env.p6);
 		return Response.json({ message: "Hello World - Práctica 7 Karen", dbData: data });
-	},
-
-	// Lee todos los registros de la tabla users en la BD D1
-	async queryDatabase(db: D1Database) {
-		const { results } = await db.prepare("SELECT * FROM users").all();
-		return results;
 	},
 } satisfies ExportedHandler<Env>;
