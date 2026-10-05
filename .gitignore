@@ -1,0 +1,10 @@
+node_modules/
+.wrangler/
+dist/
+coverage/
+reports/
+uat-report.md
+.dev.vars*
+.env*
+.DS_Store
+.x_borrar

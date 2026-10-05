@@ -1,0 +1,154 @@
+name: Práctica 7 - Pipeline con UAT
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: 22
+
+jobs:
+  # ─────────────────────────────────────────────
+  # Job 1: build + unit tests con coverage + artefacto
+  # ─────────────────────────────────────────────
+  build-test:
+    name: Build, Unit Tests y Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build (bundle con wrangler --dry-run)
+        run: npm run build
+
+      - name: Unit tests con coverage
+        run: npm run test:coverage
+
+      - name: Resumen de coverage
+        if: always()
+        run: |
+          node -e '
+            const fs = require("fs");
+            const f = "coverage/coverage-summary.json";
+            if (!fs.existsSync(f)) { console.log("Sin reporte de coverage"); process.exit(0); }
+            const t = JSON.parse(fs.readFileSync(f)).total;
+            const row = k => `| ${k} | ${t[k].covered}/${t[k].total} | ${t[k].pct}% |`;
+            const md = ["## 🧪 Coverage de unit tests", "", "| Métrica | Cubierto | % |", "|---|---|---|",
+              ...["statements","branches","functions","lines"].map(row)].join("\n");
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md + "\n");
+          '
+
+      - name: Publicar artefacto (build)
+        uses: actions/upload-artifact@v4
+        with:
+          name: practica7-build
+          path: dist/
+          retention-days: 7
+
+      - name: Publicar artefacto (coverage + junit)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: practica7-coverage
+          path: |
+            coverage/
+            reports/
+          retention-days: 7
+
+  # ─────────────────────────────────────────────
+  # Job 2: publicar en el proyecto NUEVO de Cloudflare (Prod)
+  # ─────────────────────────────────────────────
+  deploy-prod:
+    name: Deploy a Producción (practica7-prod)
+    needs: build-test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.url }}
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Descargar artefacto del build
+        uses: actions/download-artifact@v4
+        with:
+          name: practica7-build
+          path: dist/
+
+      - name: Aplicar esquema a la BD D1 de producción
+        run: npx wrangler d1 execute practica07-prod --env production --remote --file=./schema.sql
+
+      - name: Deploy a Cloudflare (env production)
+        id: deploy
+        run: |
+          npx wrangler deploy --env production | tee deploy.log
+          URL=$(grep -oE 'https://[A-Za-z0-9._-]+\.workers\.dev' deploy.log | head -1)
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "## 🚀 Desplegado en producción" >> "$GITHUB_STEP_SUMMARY"
+          echo "$URL" >> "$GITHUB_STEP_SUMMARY"
+
+  # ─────────────────────────────────────────────
+  # Job 3: UAT contra producción + reporte
+  # ─────────────────────────────────────────────
+  uat:
+    name: UAT en Producción
+    needs: deploy-prod
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Esperar propagación del deploy
+        run: sleep 10
+
+      - name: Ejecutar pruebas UAT
+        run: node scripts/uat.mjs "${{ needs.deploy-prod.outputs.url }}"
+
+      - name: Agregar reporte UAT al resumen
+        if: always()
+        run: cat uat-report.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Publicar reporte UAT
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uat-report
+          path: uat-report.md

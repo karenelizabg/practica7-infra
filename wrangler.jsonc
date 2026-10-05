@@ -1,0 +1,32 @@
+{
+  // Práctica 7 - Pipeline con UAT
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "practica7",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-19",
+  "observability": {
+    "enabled": true
+  },
+  // Ambiente por defecto (desarrollo): reutiliza la BD D1 de la práctica 6
+  "d1_databases": [
+    {
+      "binding": "p6",
+      "database_name": "practica06",
+      "database_id": "ec925e32-c2b7-440f-a965-3a8688d6267d"
+    }
+  ],
+  "env": {
+    // Ambiente de producción: Worker NUEVO (practica7-prod) con su propia BD D1
+    "production": {
+      "name": "practica7-prod",
+      "d1_databases": [
+        {
+          "binding": "p6",
+          "database_name": "practica07-prod",
+          // id de: npx wrangler d1 create practica07-prod
+          "database_id": "019010cc-0e42-417c-ade4-76bcce6d2723"
+        }
+      ]
+    }
+  }
+}
